@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custom IPTV Player</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col font-sans">
+
+  <!-- Header -->
+  <header class="border-b border-zinc-800 bg-zinc-900/50 px-6 py-4 flex justify-between items-center">
+    <h1 class="text-xl font-bold tracking-tight text-white">My Stream Player</h1>
+    <div class="text-xs text-zinc-500">Source: Arifblack00/IPTVarif</div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
+    
+    <!-- Left Column: Video Player -->
+    <div class="flex-1 p-6 flex flex-col justify-center bg-black">
+      <div class="relative aspect-video max-w-4xl mx-auto w-full bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800">
+        <video id="video-player" controls class="w-full h-full object-contain"></video>
+      </div>
+      <div class="max-w-4xl mx-auto w-full mt-4 px-2">
+        <h2 id="current-channel-title" class="text-lg font-medium text-white">Select a Channel</h2>
+        <p id="current-channel-url" class="text-xs text-zinc-500 truncate mt-1"></p>
+      </div>
+    </div>
+
+    <!-- Right Column: Channel List Sidebar -->
+    <div class="w-full md:w-80 border-t md:border-t-0 md:border-l border-zinc-800 bg-zinc-900/30 flex flex-col h-[400px] md:h-auto">
+      <div class="p-4 border-b border-zinc-800">
+        <input 
+          type="text" 
+          id="search-input" 
+          placeholder="Search channels..." 
+          class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-zinc-500 placeholder-zinc-500"
+        />
+      </div>
+      <div id="channel-container" class="flex-1 overflow-y-auto divide-y divide-zinc-900">
+        <div class="p-4 text-center text-sm text-zinc-500">Loading playlist...</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // Targets the raw raw text of your specific playlist file on GitHub
+    // Adjust 'playlist.m3u' if your file uses a different filename (e.g., channels.m3u, arif.m3u)
+    const PLAYLIST_URL = 'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u';
+    
+    let allChannels = [];
+    const video = document.getElementById('video-player');
+    const channelContainer = document.getElementById('channel-container');
+    const searchInput = document.getElementById('search-input');
+    const currentTitle = document.getElementById('current-channel-title');
+    const currentUrl = document.getElementById('current-channel-url');
+    let hlsInstance = null;
+
+    async function init() {
+      try {
+        const response = await fetch(PLAYLIST_URL);
+        if (!response.ok) throw new Error('Failed to fetch the M3U file from your repository.');
+        const m3uRawText = await response.text();
+        allChannels = parseM3U(m3uRawText);
+        renderChannels(allChannels);
+      } catch (err) {
+        channelContainer.innerHTML = `
+          <div class="p-4 text-sm text-red-400">
+            Error loading playlist.<br>
+            <span class="text-xs text-zinc-500">Ensure your repository contains a file named 'playlist.m3u' in the main branch.</span>
+          </div>`;
+      }
+    }
+
+    function parseM3U(text) {
+      const channels = [];
+      const lines = text.split('\n');
+      let currentItem = null;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#EXTINF:')) {
+          currentItem = {};
+          const commaIndex = line.lastIndexOf(',');
+          currentItem.name = commaIndex !== -1 ? line.substring(commaIndex + 1).trim() : 'Unnamed Channel';
+          
+          const tvgLogoMatch = line.match(/tvg-logo="([^"]+)"/);
+          currentItem.logo = tvgLogoMatch ? tvgLogoMatch[1] : null;
+        } else if (line.startsWith('http') && currentItem) {
+          currentItem.url = line;
+          channels.push(currentItem);
+          currentItem = null;
+        }
+      }
+      return channels;
+    }
+
+    function renderChannels(channels) {
+      if (channels.length === 0) {
+        channelContainer.innerHTML = `<div class="p-4 text-sm text-zinc-500">No active channels found in file.</div>`;
+        return;
+      }
+
+      channelContainer.innerHTML = channels.map((channel, index) => `
+        <button 
+          onclick="playChannel(${index})" 
+          class="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/50 transition-colors group focus:outline-none"
+        >
+          ${channel.logo ? 
+            `<img src="${channel.logo}" alt="" class="w-8 h-8 rounded object-contain bg-zinc-800 flex-shrink-0" onerror="this.remove()">` : 
+            `<div class="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-500 flex-shrink-0">${channel.name.charAt(0)}</div>`
+          }
+          <span class="text-sm font-medium text-zinc-300 group-hover:text-white truncate">${channel.name}</span>
+        </button>
+      `).join('');
+    }
+
+    function playChannel(index) {
+      const targetList = searchInput.value ? filterChannels() : allChannels;
+      const channel = targetList[index];
+      if (!channel) return;
+
+      currentTitle.textContent = channel.name;
+      currentUrl.textContent = channel.url;
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+
+      if (Hls.isSupported()) {
+        hlsInstance = new Hls({ maxMaxBufferLength: 10 });
+        hlsInstance.loadSource(channel.url);
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(e => console.log("Playback interrupted or blocked by browser policies"));
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = channel.url;
+        video.addEventListener('loadedmetadata', () => video.play());
+      }
+    }
+
+    function filterChannels() {
+      const query = searchInput.value.toLowerCase();
+      return allChannels.filter(c => c.name.toLowerCase().includes(query));
+    }
+
+    searchInput.addEventListener('input', () => {
+      renderChannels(filterChannels());
+    });
+
+    init();
+  </script>
+</body>
+</html>
