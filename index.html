@@ -3,15 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Custom IPTV Player</title>
+  <title>Global IPTV Web Player</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col font-sans">
 
   <header class="border-b border-zinc-800 bg-zinc-900/50 px-6 py-4 flex justify-between items-center">
-    <h1 class="text-xl font-bold tracking-tight text-white">My Stream Player</h1>
-    <div class="text-xs text-zinc-500">Source: Arifblack00/IPTVarif</div>
+    <div class="flex items-center gap-3">
+      <h1 class="text-xl font-bold tracking-tight text-white">Global Live TV</h1>
+      <span id="channel-count" class="bg-zinc-800 text-zinc-400 text-xs px-2 py-0.5 rounded-full">0 Channels</span>
+    </div>
+    <div class="text-xs text-zinc-500">Source: iptv-org cdn</div>
   </header>
 
   <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
@@ -31,64 +34,43 @@
         <input 
           type="text" 
           id="search-input" 
-          placeholder="Search channels..." 
+          placeholder="Search by channel or country..." 
           class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-zinc-500 placeholder-zinc-500"
         />
       </div>
       <div id="channel-container" class="flex-1 overflow-y-auto divide-y divide-zinc-900">
-        <div id="loading-status" class="p-4 text-center text-sm text-zinc-500">Connecting to GitHub...</div>
+        <div id="loading-status" class="p-4 text-center text-sm text-zinc-500">Downloading global playlist (this may take a few seconds)...</div>
       </div>
     </div>
 
   </main>
 
   <script>
-    // Ordered fallback list testing branches (main vs master) and file extensions (.m3u vs .m3u8)
-    const URL_VARIANTS = [
-      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u',
-      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u8',
-      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/master/playlist.m3u',
-      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/master/playlist.m3u8'
-    ];
+    // Targeted to the full global directory grouped by country code
+    const PLAYLIST_URL = 'https://iptv-org.github.io/iptv/index.country.m3u';
     
     let allChannels = [];
     const video = document.getElementById('video-player');
     const channelContainer = document.getElementById('channel-container');
-    const loadingStatus = document.getElementById('loading-status');
     const searchInput = document.getElementById('search-input');
+    const channelCountBadge = document.getElementById('channel-count');
     const currentTitle = document.getElementById('current-channel-title');
     const currentUrl = document.getElementById('current-channel-url');
     let hlsInstance = null;
 
-    // Loop through URL variants sequentially until one returns valid text
-    async function fetchPlaylistWithFallback() {
-      for (const url of URL_VARIANTS) {
-        try {
-          console.log(`Attempting to fetch: ${url}`);
-          const response = await fetch(url);
-          if (response.ok) {
-            const text = await response.text();
-            if (text.trim().startsWith('#EXTM3U')) {
-              return text;
-            }
-          }
-        } catch (e) {
-          console.error(`Failed loading variant: ${url}`, e);
-        }
-      }
-      throw new Error("Could not find a valid playlist file.");
-    }
-
     async function init() {
       try {
-        const m3uRawText = await fetchPlaylistWithFallback();
+        const response = await fetch(PLAYLIST_URL);
+        if (!response.ok) throw new Error('Failed fetching from iptv-org servers.');
+        const m3uRawText = await response.text();
         allChannels = parseM3U(m3uRawText);
+        channelCountBadge.textContent = `${allChannels.length.toLocaleString()} Channels`;
         renderChannels(allChannels);
       } catch (err) {
         channelContainer.innerHTML = `
           <div class="p-4 text-sm text-red-400">
-            Error loading playlist.<br>
-            <span class="text-xs text-zinc-500 block mt-2">Could not find a file named 'playlist.m3u' or 'playlist.m3u8' in the root directory of your main/master branches. Verify the file spelling on GitHub.</span>
+            Error loading global channels.<br>
+            <span class="text-xs text-zinc-500 block mt-1">${err.message}</span>
           </div>`;
       }
     }
@@ -118,11 +100,14 @@
 
     function renderChannels(channels) {
       if (channels.length === 0) {
-        channelContainer.innerHTML = `<div class="p-4 text-sm text-zinc-500">No active channels found in file.</div>`;
+        channelContainer.innerHTML = `<div class="p-4 text-sm text-zinc-500">No matching channels found.</div>`;
         return;
       }
 
-      channelContainer.innerHTML = channels.map((channel, index) => `
+      // Slice to top 500 records initially to avoid browser layout lag with large datasets
+      const visibleChannels = channels.slice(0, 500);
+
+      channelContainer.innerHTML = visibleChannels.map((channel, index) => `
         <button 
           onclick="playChannel(${index})" 
           class="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/50 transition-colors group focus:outline-none"
@@ -154,7 +139,7 @@
         hlsInstance.loadSource(channel.url);
         hlsInstance.attachMedia(video);
         hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(e => console.log("Playback blocked by browser runtime context."));
+          video.play().catch(e => console.log("Playback blocked by browser privacy controls."));
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = channel.url;
@@ -167,8 +152,13 @@
       return allChannels.filter(c => c.name.toLowerCase().includes(query));
     }
 
+    // Interactive lookup logic
+    let debounceTimeout;
     searchInput.addEventListener('input', () => {
-      renderChannels(filterChannels());
+      clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        renderChannels(filterChannels());
+      }, 250);
     });
 
     init();
