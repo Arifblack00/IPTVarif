@@ -9,16 +9,13 @@
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col font-sans">
 
-  <!-- Header -->
   <header class="border-b border-zinc-800 bg-zinc-900/50 px-6 py-4 flex justify-between items-center">
     <h1 class="text-xl font-bold tracking-tight text-white">My Stream Player</h1>
     <div class="text-xs text-zinc-500">Source: Arifblack00/IPTVarif</div>
   </header>
 
-  <!-- Main Workspace -->
   <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
     
-    <!-- Left Column: Video Player -->
     <div class="flex-1 p-6 flex flex-col justify-center bg-black">
       <div class="relative aspect-video max-w-4xl mx-auto w-full bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800">
         <video id="video-player" controls class="w-full h-full object-contain"></video>
@@ -29,7 +26,6 @@
       </div>
     </div>
 
-    <!-- Right Column: Channel List Sidebar -->
     <div class="w-full md:w-80 border-t md:border-t-0 md:border-l border-zinc-800 bg-zinc-900/30 flex flex-col h-[400px] md:h-auto">
       <div class="p-4 border-b border-zinc-800">
         <input 
@@ -40,37 +36,59 @@
         />
       </div>
       <div id="channel-container" class="flex-1 overflow-y-auto divide-y divide-zinc-900">
-        <div class="p-4 text-center text-sm text-zinc-500">Loading playlist...</div>
+        <div id="loading-status" class="p-4 text-center text-sm text-zinc-500">Connecting to GitHub...</div>
       </div>
     </div>
 
   </main>
 
   <script>
-    // Targets the raw raw text of your specific playlist file on GitHub
-    // Adjust 'playlist.m3u' if your file uses a different filename (e.g., channels.m3u, arif.m3u)
-    const PLAYLIST_URL = 'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u';
+    // Ordered fallback list testing branches (main vs master) and file extensions (.m3u vs .m3u8)
+    const URL_VARIANTS = [
+      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u',
+      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/main/playlist.m3u8',
+      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/master/playlist.m3u',
+      'https://raw.githubusercontent.com/Arifblack00/IPTVarif/master/playlist.m3u8'
+    ];
     
     let allChannels = [];
     const video = document.getElementById('video-player');
     const channelContainer = document.getElementById('channel-container');
+    const loadingStatus = document.getElementById('loading-status');
     const searchInput = document.getElementById('search-input');
     const currentTitle = document.getElementById('current-channel-title');
     const currentUrl = document.getElementById('current-channel-url');
     let hlsInstance = null;
 
+    // Loop through URL variants sequentially until one returns valid text
+    async function fetchPlaylistWithFallback() {
+      for (const url of URL_VARIANTS) {
+        try {
+          console.log(`Attempting to fetch: ${url}`);
+          const response = await fetch(url);
+          if (response.ok) {
+            const text = await response.text();
+            if (text.trim().startsWith('#EXTM3U')) {
+              return text;
+            }
+          }
+        } catch (e) {
+          console.error(`Failed loading variant: ${url}`, e);
+        }
+      }
+      throw new Error("Could not find a valid playlist file.");
+    }
+
     async function init() {
       try {
-        const response = await fetch(PLAYLIST_URL);
-        if (!response.ok) throw new Error('Failed to fetch the M3U file from your repository.');
-        const m3uRawText = await response.text();
+        const m3uRawText = await fetchPlaylistWithFallback();
         allChannels = parseM3U(m3uRawText);
         renderChannels(allChannels);
       } catch (err) {
         channelContainer.innerHTML = `
           <div class="p-4 text-sm text-red-400">
             Error loading playlist.<br>
-            <span class="text-xs text-zinc-500">Ensure your repository contains a file named 'playlist.m3u' in the main branch.</span>
+            <span class="text-xs text-zinc-500 block mt-2">Could not find a file named 'playlist.m3u' or 'playlist.m3u8' in the root directory of your main/master branches. Verify the file spelling on GitHub.</span>
           </div>`;
       }
     }
@@ -136,7 +154,7 @@
         hlsInstance.loadSource(channel.url);
         hlsInstance.attachMedia(video);
         hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(e => console.log("Playback interrupted or blocked by browser policies"));
+          video.play().catch(e => console.log("Playback blocked by browser runtime context."));
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = channel.url;
